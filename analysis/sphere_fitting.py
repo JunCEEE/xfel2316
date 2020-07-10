@@ -13,6 +13,7 @@ import argparse
 
 parser = argparse.ArgumentParser(prog="Sphere fitting")
 parser.add_argument("run", type=int, help="Run number")
+parser.add_argument("path", type=str, help="Path to sparse input files")
 args = parser.parse_args()
 print("Starting run %d" %args.run)
 
@@ -20,7 +21,7 @@ print("Starting run %d" %args.run)
 downsampling = 1
 pixelsize = downsampling * 200e-6
 distance = 1.62 # From logbook
-material = 'gold'
+material = 'sucrose'
 phenergy = 6000. #eV
 wavelength = (1239.8418746 / phenergy) * 1e-9 # m
 saturation_level = 10000
@@ -59,7 +60,7 @@ def rmask(r, sh, cx, cy):
     xx,yy = np.meshgrid(np.arange(nx), np.arange(ny))
     return (xx-cx)**2 + (yy-cy)**2 > (r**2)
 
-infile = "../data/r%04d_lowq.h5" %args.run
+infile = args.path + "/r%04d_lowq.h5" %args.run
 with sparse.SmallFrame(infile, geometry="../geometry/b3_lowq.geom", mode="r+") as f:
     mask = f.activepixels[:300,:300]
     sh = mask.shape
@@ -172,7 +173,7 @@ with sparse.SmallFrame(infile, geometry="../geometry/b3_lowq.geom", mode="r+") a
         f._handle["cy"][i] = y
         f._handle["error_test"][i] = pearson
         f._handle["error_diameter"][i] = derror
-        f._handle["error_intensity"][i] = intensity
+        f._handle["error_intensity"][i] = ierror
         f._handle["diameter_limits"][i] = dlim
         f._handle["intensity_limits"][i] = ilim
         f._handle["radial_qr"][i] = data_qr

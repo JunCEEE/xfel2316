@@ -1,0 +1,16 @@
+#!/bin/bash
+#PBS -N single-pulse
+#PBS -l nodes=infertron06:ppn=28
+#PBS -l walltime=10:00:00
+#PBS -q loh_queue
+#PBS -j oe
+#PBS -o /mnt/cbis/home/benedikt/tmp/
+#PBS -p 100
+
+NP=`cat $PBS_NODEFILE|wc -l`
+module load intel/ics-v16
+module load openmpi/v2.0.1
+source /mnt/cbis/home/benedikt/.bashrc
+conda activate py3
+cd /mnt/cbis/home/benedikt/projects/xfel2316/analysis
+mpirun -np $NP -machinefile $PBS_NODEFILE python run_sucrose_2.py
