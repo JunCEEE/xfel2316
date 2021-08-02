@@ -12,7 +12,6 @@ and then start the Hummingbird backend:
 """
 import plotting.image
 import plotting.line
-import plotting.correlation
 import analysis.agipd
 import analysis.event
 import analysis.hitfinding
@@ -23,29 +22,22 @@ import numpy as np
 import sys, os; sys.path.append(os.path.split(__file__)[0])
 from online_agipd_calib import AGIPD_Calibrator
 from online_agipd_calib import common_mode_correction
-# from online_agipd_calib import common_mode_correction_twopass as common_mode_correction
 import xfel_online as xo
 
 
 state = {}
 state['Facility'] = 'EuXFELtrains'
-# state['EuXFEL/DataSource'] = 'tcp://max-exfl001.desy.de:1234' # Raw
 state['EuXFEL/DataSource'] = 'tcp://10.253.0.51:45000' # Raw
 # state['EuXFEL/DataSource'] = 'tcp://10.253.0.51:45011' # Calibrated
-# state['EuXFEL/DataSource_GMD'] = 'tcp://10.253.0.142:6666' # Hack for the GMD
-# state['EuXFEL/DataSource_GMD'] = 'tcp://10.253.0.142:45000' # Hack for the GMD
-# state['EuXFEL/DataSource_GMD'] = 'tcp://max-exfl001.desy.de:1234' # Hack for the GMD
+state['EuXFEL/DataSource_GMD'] = 'tcp://10.253.0.142:6666' # Hack for the GMD
 state['EuXFEL/DataFormat'] = 'Raw'
-# state['EuXFEL/DataFormat'] = 'Calib'
 state['EuXFEL/MaxTrainAge'] = 4
 # state['EuXFEL/MaxPulses'] = 120
-state['EuXFEL/MaxPulses'] = 137
+state['EuXFEL/MaxPulses'] = 176
 
 # Use SelModule = None or remove key to indicate a full detector
 # [For simulator, comment if running with full detector, otherwise uncomment]
-# state['EuXFEL/SelModule'] = 4
-# state['EuXFEL/SelModule'] = None
-pulses_per_train = 250
+state['EuXFEL/SelModule'] = 4
 
 
 # Roundness
@@ -66,7 +58,6 @@ sizing = True
 
 # Hitfinding parameters
 adu_threshold  = 25
-#adu_threshold  = 37
 hit_threshold  = 400
 # hit_threshold  = 100 # Trigger hits even with no beam
 hit_threshold_strong = hit_threshold * 1.5
@@ -78,7 +69,7 @@ dark_threshold = 50
 # Pulse filter
 # base_pulse_filter = np.zeros(176, dtype="bool")
 # base_pulse_filter[1::1] = True
-base_pulse_filter = np.ones(250, dtype="bool")
+base_pulse_filter = np.ones(176, dtype="bool")
 base_pulse_filter[state['EuXFEL/MaxPulses']:] = False
 base_pulse_filter[0] = False
 base_pulse_filter[18::32] = False
@@ -114,26 +105,20 @@ if read_mask:
     manual_mask = np.bool8(np.transpose(manual_mask, axes=(2,1,0)))#[:, :, np.newaxis])
 
 # Building the initial mask
-base_initmask = np.ones((128,512,176)).astype(np.bool)
+initmask = np.ones((128,512,176)).astype(np.bool)
 if usemask:
-    base_initmask &= manual_mask
+    initmask &= manual_mask
 
 # Size estimation parameters
 binning = 1
 
+mask_select_pulses = True
+
 def onEvent(evt):
-    global running_background
-    analysis.event.printKeys(evt)
-
-    # Calculate number of pulses in each train
-    # npulses = len(T.timestamp) #Now get that from the length of the data
-    analysis.event.printProcessingRate(pulses_per_event=176, label="Processing rate (pulses):" )
-    analysis.event.printProcessingRate(pulses_per_event=1, label="Processing rate (trains):" )
-
-
+    global running_background, initmask, mask_select_pulses
+    
     # Apply the pulse mask derived from the GMD
-    # pulse_filter = base_pulse_filter * xo.pulses_mask(evt)
-    pulse_filter = base_pulse_filter
+    pulse_filter = base_pulse_filter * xo.pulses_mask(evt)
 
     # Shape of data: (module, ss, fs, cell)
     #print(evt['photonPixelDetectors']['AGIPD'].data.shape)
@@ -146,7 +131,6 @@ def onEvent(evt):
     agipd_gain = agipd_gain_all[:, :, pulse_filter[:data_len]]
 
     T = evt["eventID"]["Timestamp"]
-    # import pdb; pdb.set_trace()
     cellId = T.cellId[pulse_filter[:data_len]]
     trainId = T.trainId[pulse_filter[:data_len]]
     goodcells = T.cellId[pulse_filter[:data_len]]
@@ -154,15 +138,19 @@ def onEvent(evt):
     
 
     npulses = agipd_data.shape[-1]
-    if not npulses:
-        return
     
+
+    agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD', agipd_data)
+
     # Print statistics
     if statistics and ipc.mpi.is_main_worker():
         print("Nr. of pulses per train: {:d}".format(npulses))
         # print("Bad cells (filtered out): ", badcells)
 
-    agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD', agipd_data)
+    # Calculate number of pulses in each train
+    # npulses = len(T.timestamp) #Now get that from the length of the data
+    analysis.event.printProcessingRate(pulses_per_event=npulses, label="Processing rate (pulses):" )
+    analysis.event.printProcessingRate(pulses_per_event=1, label="Processing rate (trains):" )
 
     # Remember to remove
     # agipd_module.data[np.isnan(agipd_module.data)] = 0.
@@ -174,23 +162,22 @@ def onEvent(evt):
         calibrated = calibrated[:, :, pulse_filter[:data_len]]
         badpixmask = badpixmask[:, :, pulse_filter[:data_len]]
         badpixmask = np.bool8(badpixmask)
-        agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD/Calib', calibrated)    
+        agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD/Calib', calibrated)
+        if mask_select_pulses:
+            # initmask = initmask[:,:,calibrator._pulse_filter]
+            initmask = initmask[:,:,pulse_filter]
+            mask_select_pulses = False
     else:
         agipd_module.data[np.isnan(agipd_module.data)] = 0.
         badpixmask = np.ones((128,512,npulses)).astype(np.bool)
-
-    initmask = base_initmask[:,:,pulse_filter[:data_len]]
+        if mask_select_pulses:
+            initmask = initmask[:,:,:npulses]
+            mask_select_pulses = False
     mask = (badpixmask & initmask)
 
     # Common-mode  correction
     if commonmode:
-        common_mode_corrected, asic_sum, asic_median = common_mode_correction(agipd_module.data, mask)
-        agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD/Calib', common_mode_corrected)
-        asic_sum = asic_sum.flatten()
-        asic_median = asic_median.flatten()
-        asic_sum = add_record(evt['analysis'], 'Common Mode', 'ASIC sum', asic_sum)
-        asic_median = add_record(evt['analysis'], 'Common Mode', 'ASIC median', asic_median)
-        plotting.line.plotTrace(asic_sum, paramX=asic_median, name='ASIC sum vs median', group='Common Mode')#, mask=masksum.min(axis=2))        
+        agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD/Calib', common_mode_correction(agipd_module.data, mask))
 
     # Flip the X-axis
     agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD/Calib', agipd_module.data[:,::-1])
@@ -342,6 +329,16 @@ def onEvent(evt):
             binned_pulse = agipd_hits[:,:128].reshape((128//binning,binning,128//binning,binning,Nhits)).sum(axis=(1,3))
             #print(binned_pulse.shape)
 
+            # Sizing
+            sizing_size, sizing_score, sizing_template_radii = xo.sizingAGIPD(agipd_hits.data, mask, center=(-16.4, 8.5), r0=0.01, r1=0.7, num_div=1000)
+            #print(sizing_size, sizing_score.argmax(axis=1))
+            sizing_index = sizing_score.argmax(axis=1)
+            #print(sizing_size[0]*2.23792136e-7*1e9, sizing_score[0][sizing_index[0]])
+            #print(sizing_size[sizing_score.argmax()], sizing_score[:,sizing_score.argmax()])
+            # sizing_size *= 2.23792136e-07 # Semi-empirical high accuracy conversion from digital units to length.
+            for i in range(Nhits):
+                size_record = add_record(evt['analysis'], 'analysis', 'sizing: size', sizing_size[i]*xo.REAL_UNIT)
+                plotting.line.plotHistory(size_record, history=10000, group='Sizing')
 
 
             # Plot some pretty pictures (but not more than show_max_hits)
@@ -365,15 +362,6 @@ def onEvent(evt):
             for i in pick_indices:
                 agipd_pulse_strong = add_record(evt['analysis'], 'analysis', 'AGIPD - hits - strong', agipd_hits_strong[:,:,brightest_strong]) # i -> brightest
                 plotting.image.plotImage(agipd_pulse_strong, group='Hitfinding', vmin=0., mask=mask[:,:,brightest_strong])
-
-
-            # Sizing
-            sizing_size, sizing_score, sizing_template_radii = xo.sizingAGIPD(agipd_hits_strong.data, mask, center=(-16.4, 8.5), r0=0.01, r1=0.7, num_div=1000)
-            sizing_index = sizing_score.argmax(axis=1)
-            for i in range(Nhits_strong):
-                size_record = add_record(evt['analysis'], 'analysis', 'sizing: size', sizing_size[i]*xo.REAL_UNIT)
-                plotting.line.plotHistory(size_record, history=10000, group='Sizing')
-
             
             # Roundness
             roundness = roundness_calculator.inv_roundness_stack(agipd_hits_strong)

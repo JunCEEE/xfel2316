@@ -10,14 +10,18 @@ and then start the Hummingbird backend:
 
 ./hummingbird.py -b examples/euxfel/mock/conf.py
 """
+import os
 import plotting.image
 import plotting.line
 import plotting.correlation
 import analysis.agipd
 import analysis.event
 import analysis.hitfinding
+import analysis.pixel_detector
 import ipc.mpi
 from backend import add_record
+from timeit import default_timer as timer
+
 
 import numpy as np
 import sys, os; sys.path.append(os.path.split(__file__)[0])
@@ -29,23 +33,29 @@ import xfel_online as xo
 
 state = {}
 state['Facility'] = 'EuXFELtrains'
-# state['EuXFEL/DataSource'] = 'tcp://max-exfl001.desy.de:1234' # Raw
 state['EuXFEL/DataSource'] = 'tcp://10.253.0.51:45000' # Raw
-# state['EuXFEL/DataSource'] = 'tcp://10.253.0.51:45011' # Calibrated
-# state['EuXFEL/DataSource_GMD'] = 'tcp://10.253.0.142:6666' # Hack for the GMD
-# state['EuXFEL/DataSource_GMD'] = 'tcp://10.253.0.142:45000' # Hack for the GMD
-# state['EuXFEL/DataSource_GMD'] = 'tcp://max-exfl001.desy.de:1234' # Hack for the GMD
-state['EuXFEL/DataFormat'] = 'Raw'
-# state['EuXFEL/DataFormat'] = 'Calib'
-state['EuXFEL/MaxTrainAge'] = 4
-# state['EuXFEL/MaxPulses'] = 120
-state['EuXFEL/MaxPulses'] = 137
+# state['EuXFEL/DataSource'] = 'tcp://127.0.0.1:1234' # Raw
+# state['EuXFEL/DataSource'] = 'tcp://max-display001.desy.de:1234' # Raw
+# state['EuXFEL/DataSource'] = 'tcp://127.0.0.1:1234' # Raw
 
+# We're gonna comment the GMD as it's not available in karabo-bridge
+# state['EuXFEL/DataSource_GMD'] = 'tcp://10.253.0.142:6666' # Hack for the GMD
+state['EuXFEL/DataFormat'] = 'Raw'
+state['EuXFEL/MaxTrainAge'] = 4
+
+##
+## *** CHANGE THIS TO THE NUMBER OF TRAINS WHEN RUNNING FOR REAL!! *** ##
+##
+state['EuXFEL/MaxPulses'] = 352
+
+##
+## *** CHANGE THIS TO THE MODULE YOU WANT WHEN RUNNING FOR REAL!! *** ##
+##
+# We're just using 0 because that's all the karabo-bridge simulator can produce
 # Use SelModule = None or remove key to indicate a full detector
-# [For simulator, comment if running with full detector, otherwise uncomment]
-# state['EuXFEL/SelModule'] = 4
-# state['EuXFEL/SelModule'] = None
-pulses_per_train = 250
+# state['EuXFEL/SelModule'] = 0 # None # 0
+state['EuXFEL/SelModule'] = 15 # None # 0
+filtered_pulses_per_train = 64
 
 
 # Roundness
@@ -57,36 +67,52 @@ running_background = None
 # Switches
 alignment  = True
 hitfinding = True
-background = False
+background = True
 statistics = True
 calibrate  = True
 commonmode = True
-usemask = True
+usemask = False
 sizing = True
+# The calculation of mean nrPhotons only works for single MPI process
+photon_count = True
+
+# Photon count parameters
+adu_threshol2d_ph_count = 32
+# ADU per photon
+adu_photon = 100
+# Get mean number of photons every train_interval
+train_interval = 5
+# upper_threshold = 30
+
 
 # Hitfinding parameters
-adu_threshold  = 25
+adu_threshold  = adu_threshol2d_ph_count
 #adu_threshold  = 37
+# hit_threshold  = 400
 hit_threshold  = 400
 # hit_threshold  = 100 # Trigger hits even with no beam
 hit_threshold_strong = hit_threshold * 1.5
-maskhit_threshold = 90
+# maskhit_threshold = 1 # debug
+maskhit_threshold = 40
 ratio_threshold = 2
-sumhit_threshold = 3000
+# sumhit_threshold = 3000
+sumhit_threshold = 280000
 dark_threshold = 50
 
-# Pulse filter
-# base_pulse_filter = np.zeros(176, dtype="bool")
-# base_pulse_filter[1::1] = True
-base_pulse_filter = np.ones(250, dtype="bool")
+# Pulse filter. 600 is large enough for the number of cell in the AGIPD with some room to spare
+base_pulse_filter = np.ones(600, dtype="bool")
 base_pulse_filter[state['EuXFEL/MaxPulses']:] = False
 base_pulse_filter[0] = False
 base_pulse_filter[18::32] = False
 base_pulse_filter[29::32] = False
 
 # AGIPD calibrator
-path_to_calib = "/gpfs/exfel/exp/SPB/201802/p002160/usr/Shared/calib/latest/"
-calibrator = AGIPD_Calibrator([path_to_calib + "Cheetah-AGIPD04-calib.h5"], max_pulses=state['EuXFEL/MaxPulses'])
+# path_to_calib = "/gpfs/exfel/exp/SPB/201802/p002160/usr/Shared/calib/latest/"
+# path_to_calib = "/gpfs/exfel/exp/SPB/202130/p900201/usr/Software/calib/r0355-r0356-r0357/"
+path_to_calib = "/gpfs/exfel/exp/SPB/202130/p900201/usr/Software/calib/r0361-r0362-r0363/"
+# import pdb; pdb.set_trace()
+calibrator = AGIPD_Calibrator([os.path.join(path_to_calib,"Cheetah-AGIPD15-calib.h5")], max_pulses=state['EuXFEL/MaxPulses'])
+# calibrator = AGIPD_Calibrator([path_to_calib + "Cheetah-AGIPD04-calib.h5"], max_pulses=state['EuXFEL/MaxPulses'])
 
 # maximum nr. of hits to be sent per train
 show_max_hits = 2
@@ -121,19 +147,25 @@ if usemask:
 # Size estimation parameters
 binning = 1
 
+# For mean photon counting per train in a certain period
+nrPhotons_acc = {"stat_time":0,"end_time":0,"train_count":0,"nrPhotons_acc":0,"renew":True,"photons":0}
+
+
 def onEvent(evt):
     global running_background
-    analysis.event.printKeys(evt)
+    global nrPhotons_acc
 
     # Calculate number of pulses in each train
     # npulses = len(T.timestamp) #Now get that from the length of the data
-    analysis.event.printProcessingRate(pulses_per_event=176, label="Processing rate (pulses):" )
+    analysis.event.printProcessingRate(pulses_per_event=filtered_pulses_per_train, label="Processing rate (pulses):" )
     analysis.event.printProcessingRate(pulses_per_event=1, label="Processing rate (trains):" )
 
+    # Just for debugging
+    analysis.event.printNativeKeys(evt)
 
     # Apply the pulse mask derived from the GMD
-    # pulse_filter = base_pulse_filter * xo.pulses_mask(evt)
-    pulse_filter = base_pulse_filter
+    pulse_filter = base_pulse_filter * xo.pulses_mask(evt,len(base_pulse_filter))
+    # pulse_filter = base_pulse_filter
 
     # Shape of data: (module, ss, fs, cell)
     #print(evt['photonPixelDetectors']['AGIPD'].data.shape)
@@ -146,17 +178,16 @@ def onEvent(evt):
     agipd_gain = agipd_gain_all[:, :, pulse_filter[:data_len]]
 
     T = evt["eventID"]["Timestamp"]
-    # import pdb; pdb.set_trace()
     cellId = T.cellId[pulse_filter[:data_len]]
     trainId = T.trainId[pulse_filter[:data_len]]
     goodcells = T.cellId[pulse_filter[:data_len]]
     badcells = T.badCells
-    
+
 
     npulses = agipd_data.shape[-1]
     if not npulses:
         return
-    
+
     # Print statistics
     if statistics and ipc.mpi.is_main_worker():
         print("Nr. of pulses per train: {:d}".format(npulses))
@@ -174,12 +205,13 @@ def onEvent(evt):
         calibrated = calibrated[:, :, pulse_filter[:data_len]]
         badpixmask = badpixmask[:, :, pulse_filter[:data_len]]
         badpixmask = np.bool8(badpixmask)
-        agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD/Calib', calibrated)    
+        agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD/Calib', calibrated)
     else:
         agipd_module.data[np.isnan(agipd_module.data)] = 0.
         badpixmask = np.ones((128,512,npulses)).astype(np.bool)
 
-    initmask = base_initmask[:,:,pulse_filter[:data_len]]
+    initmask = base_initmask[:,:,:data_len]
+    initmask = initmask[:,:,pulse_filter[:data_len]]
     mask = (badpixmask & initmask)
 
     # Common-mode  correction
@@ -190,7 +222,7 @@ def onEvent(evt):
         asic_median = asic_median.flatten()
         asic_sum = add_record(evt['analysis'], 'Common Mode', 'ASIC sum', asic_sum)
         asic_median = add_record(evt['analysis'], 'Common Mode', 'ASIC median', asic_median)
-        plotting.line.plotTrace(asic_sum, paramX=asic_median, name='ASIC sum vs median', group='Common Mode')#, mask=masksum.min(axis=2))        
+        plotting.line.plotTrace(asic_sum, paramX=asic_median, name='ASIC sum vs median', group='Common Mode')#, mask=masksum.min(axis=2))
 
     # Flip the X-axis
     agipd_module = add_record(evt['analysis'], 'analysis', 'AGIPD/Calib', agipd_module.data[:,::-1])
@@ -210,24 +242,32 @@ def onEvent(evt):
     if alignment:
         # Mean image in a train
         agipd_module_thresh = agipd_module.data.copy() #Set low values to zero for mean img
-        agipd_module_thresh[agipd_module_thresh < 35] = 0
-        agipd_module_thresh
+        agipd_module_thresh[agipd_module_thresh < adu_threshold] = 0
+        # agipd_module_thresh
         meanimg = add_record(evt['analysis'], 'analysis', 'meanimg', agipd_module_thresh.mean(axis=-1))
-        plotting.image.plotImage(meanimg, group='Alignment', vmin=-10, vmax=50)#, mask=masksum.min(axis=2))
+        plotting.image.plotImage(meanimg, group='Alignment', vmin=-10)#, mask=masksum.min(axis=2))
 
         # Single pulse image
         random_index = np.random.choice(npulses, 1)[0]
         singleimg = add_record(evt['analysis'], 'analysis', 'singleimg', agipd_module.data[:,:,random_index])
         #plotting.image.plotImage(singleimg, group='Alignment', mask=mask[:,:,random_index], vmin=0.)
-        plotting.image.plotImage(singleimg, group='Alignment', vmin=0.)
+        plotting.image.plotImage(singleimg, group='Alignment')
+        # plotting.image.plotImage(singleimg, group='Alignment', vmin=0.)
 
         mask_record = add_record(evt['analysis'], 'analysis', 'mask', mask[:, :, random_index])
         plotting.image.plotImage(mask_record, group='Alignment')
 
 
         # Mean data intensity over all pixels in all cells of detector
-        mean = add_record(evt['analysis'], 'analysis', 'mean', agipd_module.data[:,:].mean())
+        # mean = add_record(evt['analysis'], 'analysis', 'mean', agipd_module.data[:,:].mean())
+        mean = add_record(evt['analysis'], 'analysis', 'mean', agipd_module_thresh[:,:].mean())
         plotting.line.plotHistory(mean, group='Alignment')
+        max_pixel = add_record(evt['analysis'], 'analysis', 'max', agipd_module_thresh[:,:].max())
+        plotting.line.plotHistory(max_pixel, group='Alignment')
+        min_pixel = add_record(evt['analysis'], 'analysis', 'min', agipd_module_thresh[:,:].min())
+        plotting.line.plotHistory(min_pixel, group='Alignment')
+
+
 
 
 
@@ -348,14 +388,14 @@ def onEvent(evt):
             pick_indices = np.random.choice(Nhits, min(show_max_hits, Nhits), replace=False)
             for i in pick_indices:
                 agipd_pulse = add_record(evt['analysis'], 'analysis', 'AGIPD - hits', agipd_hits[:,:,i]) # i -> brightest
-                plotting.image.plotImage(agipd_pulse, group='Hitfinding', vmin=0., mask=mask[:,:,i])
+                plotting.image.plotImage(agipd_pulse, group='Hitfinding', mask=mask[:,:,i])
 
                 # Binned hit image
                 agipd_pulse_binned = add_record(evt['analysis'], 'analysis', 'AGIPD - binned hits', binned_pulse[:,:,brightest])
                 plotting.image.plotImage(agipd_pulse_binned, group='Hitfinding', vmin=0.)
 
         Nhits_strong = hittrain_strong.sum()
-        
+
         sphere_hits = np.zeros(len(hittrain), dtype="bool8")
         non_sphere_hits = np.zeros(len(hittrain), dtype="bool8")
         if Nhits_strong:
@@ -369,12 +409,14 @@ def onEvent(evt):
 
             # Sizing
             sizing_size, sizing_score, sizing_template_radii = xo.sizingAGIPD(agipd_hits_strong.data, mask, center=(-16.4, 8.5), r0=0.01, r1=0.7, num_div=1000)
-            sizing_index = sizing_score.argmax(axis=1)
+
+            # Seems unused
+            # sizing_index = sizing_score.argmax(axis=1)
             for i in range(Nhits_strong):
                 size_record = add_record(evt['analysis'], 'analysis', 'sizing: size', sizing_size[i]*xo.REAL_UNIT)
                 plotting.line.plotHistory(size_record, history=10000, group='Sizing')
 
-            
+
             # Roundness
             roundness = roundness_calculator.inv_roundness_stack(agipd_hits_strong)
             # print(roundness)
@@ -385,11 +427,11 @@ def onEvent(evt):
             for a in is_sphere:
                 is_hit_record = add_record(evt['analysis'], 'analysis', 'Round/Strong', int(a)) # i -> brightest
                 plotting.line.plotHistory(is_hit_record, history=10000, group='Roundness')
-                
+
             # if ipc.mpi.is_main_worker():
                 # plotting.line.plotHistory(evt['analysis']['Sphere ratio'], history=10000, group='Roundness')
 
-            
+
             round_particle = add_record(evt['analysis'], 'analysis', 'round', agipd_hits_strong[:, :, roundness.argmin()])
             not_round_particle = add_record(evt['analysis'], 'analysis', 'not round', agipd_hits_strong[:, :, roundness.argmax()])
             if roundness.min() <= 1.8: # 1.8
@@ -410,3 +452,74 @@ def onEvent(evt):
             for i in pick_misses:
                 agipd_pulse_miss = add_record(evt['analysis'], 'analysis', 'AGIPD - miss', agipd_misses[:,:,i])
                 plotting.image.plotImage(agipd_pulse_miss, group='Hitfinding', vmin=0.)
+
+    # Count Nr. of Photons
+    if photon_count:
+        # Configuration for histogram plot
+        # histogramCCD = {
+        #     'hmin': -10,
+        #     'hmax': 100,
+        #     'bins': 200,
+        #     'label': "Nr of photons",
+        #     'history': 200}
+
+        # Detector statistics
+        # analysis.pixel_detector.printStatistics(evt["photonPixelDetectors"])
+
+        # Count Nr. of Photons
+        # analysis.pixel_detector.totalNrPhotons(evt, evt['photonPixelDetectors']['AGIPD'], outkey="nrPhotons")
+        # plotting.line.plotHistory(evt["analysis"]["nrPhotons"], label='Nr of photons / frame', history=50, group='Photon count')
+
+        data_adu = agipd_module.data
+        data_mean_pulse = data_adu.mean(axis=2)
+        data = data_mean_pulse.flat
+        # print(data_adu.shape)
+        valid = data > adu_threshol2d_ph_count
+        # data_adu[data_adu <= adu_threshol2d_ph_count] = 0
+        nrPhotons_val = data[valid].sum() / float(adu_photon)
+        nrPhotons = add_record(evt['analysis'], 'analysis', 'nrPhotons', nrPhotons_val)
+        plotting.line.plotHistory(nrPhotons, group='nrPhotons')
+
+        # Detector histogram
+        # plotting.line.plotHistogram(evt["photonPixelDetectors"]["AGIPD"], **histogramCCD, group='Photon count')
+
+        # Detector images
+        # plotting.image.plotImage(evt["photonPixelDetectors"]["AGIPD"], group='Photon count')
+
+        nrPhotons_acc['train_count'] += 1
+        nrPhotons_acc['photons'] += nrPhotons_val
+
+        if (nrPhotons_acc['renew']):
+            nrPhotons_acc['stat_time'] = T.timestamp[0]
+            nrPhotons_acc['renew'] = False
+
+        if (nrPhotons_acc['train_count']%train_interval == 0):
+            time_elapse = T.timestamp[0] - nrPhotons_acc['stat_time'] # second
+            print(f'nrPhotons averaged over {train_interval} pulses in {time_elapse} s')
+            print(f'ADU/photon = {adu_photon}')
+            nrPhotons_avg = add_record(evt['analysis'], 'analysis', 'mean nrPhotons', nrPhotons_acc['photons']/train_interval)
+            plotting.line.plotHistory(nrPhotons_avg, group='nrPhotons')
+            nrPhotons_acc['renew'] = True
+            nrPhotons_acc['train_count'] = 0
+            nrPhotons_acc['photons'] = 0
+
+        #     try:
+        #         end = timer()
+        #         print('{} s elapsed'.format(end - start))
+        #         del end
+        #     except:
+        #         start = timer()
+        #         print(f"Hit {trainId[0]}")
+
+        #     try:
+        #         nrPhotons_avg = add_record(evt['analysis'], 'analysis', 'mean nrPhotons', nrPhotons_acc/train_interval)
+        #         plotting.line.plotHistory(nrPhotons_avg, group='nrPhotons')
+        #     except:
+        #         nrPhotons_acc = 0
+        #         print('Reset nrPhotons_acc')
+        # else:
+        #     try:
+        #         nrPhotons_acc += nrPhotons_val
+        #         print(trainId[0])
+        #     except:
+        #         pass

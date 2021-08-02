@@ -20,7 +20,7 @@ class AGIPD_Combiner():
     Then use get_frame(num) to get specific frame
     '''
     def __init__(self, run, raw=True, calib_run=None, good_cells=range(176), verbose=0,
-            geom_fname='../geometry/e2.geom'):
+            geom_fname='../geometry/agipd_2696_v5.geom'):
         self.num_h5cells = 176
         self.verbose = verbose
         self.good_cells = np.array(good_cells)
@@ -30,9 +30,9 @@ class AGIPD_Combiner():
             self.x, self.y = geom.pixel_maps_from_geometry_file(geom_fname)
         calib_glob = None
         if self.is_raw_data and calib_run is None:
-            calib_glob='/gpfs/exfel/exp/SPB/201901/p002316/usr/Shared/calib/latest/Cheetah*.h5'
+            calib_glob='/gpfs/exfel/exp/SPB/202130/p900201/usr/Software/calib/r0355-r0356-r0357/Cheetah*.h5'
         elif self.is_raw_data:
-            calib_glob='/gpfs/exfel/exp/SPB/201901/p002316/usr/Shared/calib/r%.4d/Cheetah*.h5' % calib_run
+            calib_glob='/gpfs/exfel/exp/SPB/202130/p900201/usr/Software/calib/r%.4d-r%.4d-r%.4d/Cheetah*.h5' % (calib_run,calib_run+1,calib_run+2)
         self._make_flist(run, calib_glob)
         self._get_nframes_list()
         self.frame = np.empty((16,512,128))
@@ -41,9 +41,9 @@ class AGIPD_Combiner():
         
     def _make_flist(self, run, calib_glob):
         if self.is_raw_data:
-            folder_path = '/gpfs/exfel/exp/SPB/201901/p002316/raw/r%.4d/'%run
+            folder_path = '/gpfs/exfel/exp/SPB/202130/p900201/raw/r%.4d/'%run
         else:
-            folder_path = '/gpfs/exfel/exp/SPB/201901/p002316/proc/r%.4d/'%run
+            folder_path = '/gpfs/exfel/exp/SPB/202130/p900201/proc/r%.4d/'%run
         self.flist = np.array([np.sort(glob.glob('%s/*-AGIPD%.2d*.h5'%(folder_path, r))) for r in range(16)])
         
         try:

@@ -21,48 +21,43 @@ from backend import add_record
 
 import numpy as np
 import sys, os; sys.path.append(os.path.split(__file__)[0])
-from online_agipd_calib import AGIPD_Calibrator
-from online_agipd_calib import common_mode_correction
+# from online_agipd_calib import AGIPD_Calibrator
+# from online_agipd_calib import common_mode_correction
 # from online_agipd_calib import common_mode_correction_twopass as common_mode_correction
-import xfel_online as xo
+# import xfel_online as xo
 
 
 state = {}
-state['Facility'] = 'EuXFELtrains'
-# state['EuXFEL/DataSource'] = 'tcp://max-exfl001.desy.de:1234' # Raw
-state['EuXFEL/DataSource'] = 'tcp://10.253.0.51:45000' # Raw
+state['Facility'] = 'EuXFEL'
+# state['EuXFEL/DataSource'] = 'tcp://10.253.0.51:45000' # Raw
+state['EuXFEL/DataSource'] = 'tcp://max-exfl001.desy.de:1234' # Raw
 # state['EuXFEL/DataSource'] = 'tcp://10.253.0.51:45011' # Calibrated
-# state['EuXFEL/DataSource_GMD'] = 'tcp://10.253.0.142:6666' # Hack for the GMD
-# state['EuXFEL/DataSource_GMD'] = 'tcp://10.253.0.142:45000' # Hack for the GMD
-# state['EuXFEL/DataSource_GMD'] = 'tcp://max-exfl001.desy.de:1234' # Hack for the GMD
+state['EuXFEL/DataSource_GMD'] = 'tcp://max-exfl001.desy.de:1234' # Hack for the GMD
 state['EuXFEL/DataFormat'] = 'Raw'
-# state['EuXFEL/DataFormat'] = 'Calib'
 state['EuXFEL/MaxTrainAge'] = 4
 # state['EuXFEL/MaxPulses'] = 120
 state['EuXFEL/MaxPulses'] = 137
 
 # Use SelModule = None or remove key to indicate a full detector
 # [For simulator, comment if running with full detector, otherwise uncomment]
-# state['EuXFEL/SelModule'] = 4
-# state['EuXFEL/SelModule'] = None
-pulses_per_train = 250
+state['EuXFEL/SelModule'] = 4
 
 
 # Roundness
-roundness_calculator = xo.Roundness()
+# roundness_calculator = xo.Roundness()
 
 # Parameters and buffers
 running_background = None
 
 # Switches
-alignment  = True
-hitfinding = True
+alignment  = False
+hitfinding = False
 background = False
-statistics = True
-calibrate  = True
-commonmode = True
-usemask = True
-sizing = True
+statistics = False
+calibrate  = False
+commonmode = False
+usemask = False
+sizing = False
 
 # Hitfinding parameters
 adu_threshold  = 25
@@ -78,7 +73,7 @@ dark_threshold = 50
 # Pulse filter
 # base_pulse_filter = np.zeros(176, dtype="bool")
 # base_pulse_filter[1::1] = True
-base_pulse_filter = np.ones(250, dtype="bool")
+base_pulse_filter = np.ones(176, dtype="bool")
 base_pulse_filter[state['EuXFEL/MaxPulses']:] = False
 base_pulse_filter[0] = False
 base_pulse_filter[18::32] = False
@@ -86,7 +81,7 @@ base_pulse_filter[29::32] = False
 
 # AGIPD calibrator
 path_to_calib = "/gpfs/exfel/exp/SPB/201802/p002160/usr/Shared/calib/latest/"
-calibrator = AGIPD_Calibrator([path_to_calib + "Cheetah-AGIPD04-calib.h5"], max_pulses=state['EuXFEL/MaxPulses'])
+# calibrator = AGIPD_Calibrator([path_to_calib + "Cheetah-AGIPD04-calib.h5"], max_pulses=state['EuXFEL/MaxPulses'])
 
 # maximum nr. of hits to be sent per train
 show_max_hits = 2
@@ -123,7 +118,6 @@ binning = 1
 
 def onEvent(evt):
     global running_background
-    analysis.event.printKeys(evt)
 
     # Calculate number of pulses in each train
     # npulses = len(T.timestamp) #Now get that from the length of the data
@@ -132,8 +126,8 @@ def onEvent(evt):
 
 
     # Apply the pulse mask derived from the GMD
-    # pulse_filter = base_pulse_filter * xo.pulses_mask(evt)
-    pulse_filter = base_pulse_filter
+    pulse_filter = base_pulse_filter * xo.pulses_mask(evt)
+    # pulse_filter = base_pulse_filter
 
     # Shape of data: (module, ss, fs, cell)
     #print(evt['photonPixelDetectors']['AGIPD'].data.shape)
@@ -146,7 +140,6 @@ def onEvent(evt):
     agipd_gain = agipd_gain_all[:, :, pulse_filter[:data_len]]
 
     T = evt["eventID"]["Timestamp"]
-    # import pdb; pdb.set_trace()
     cellId = T.cellId[pulse_filter[:data_len]]
     trainId = T.trainId[pulse_filter[:data_len]]
     goodcells = T.cellId[pulse_filter[:data_len]]

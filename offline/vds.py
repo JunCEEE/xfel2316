@@ -26,14 +26,14 @@ def main():
     parser = argparse.ArgumentParser(description='Create synchronized AGIPD VDS files')
     parser.add_argument('run', help='Run number', type=int)
     parser.add_argument('-p', '--proc', help='If proc data (default=False)', action='store_true', default=False)
-    parser.add_argument('-o', '--out_folder', help='Path of output folder (default=/gpfs/exfel/u/scratch/SPB/201901/p002316/vds/)', default='/gpfs/exfel/u/scratch/SPB/201901/p002316/vds/')
+    parser.add_argument('-o', '--out_folder', help='Path of output folder (default=/gpfs/exfel/u/scratch/SPB/202130/p900201/juncheng/spi-comission/vds/)', default='/gpfs/exfel/u/scratch/SPB/202130/p900201/juncheng/spi-comission/vds/')
     args = parser.parse_args()
 
     npulses = 128
     if not args.proc:
-        folder = '/gpfs/exfel/exp/SPB/201901/p002316/raw/r%.4d/'%args.run
+        folder = '/gpfs/exfel/exp/SPB/202130/p900201/raw/r%.4d/'%args.run
     else:
-        folder = '/gpfs/exfel/exp/SPB/201901/p002316/proc/r%.4d/'%args.run
+        folder = '/gpfs/exfel/exp/SPB/202130/p900201/proc/r%.4d/'%args.run
 
     ntrains = -1
     ftrain = sys.maxsize
